@@ -18,18 +18,50 @@ st.set_page_config(
 def get_snowflake_connection():
     """Crée une connexion Snowflake avec authentification par clé privée"""
     
+    import os
+    
+    # Essayer différents chemins pour la clé privée
+    # 1. Chemin depuis secrets.toml (local)
+    # 2. Chemin Render (/etc/secrets/)
+    # 3. Chemin racine de l'app (/app/)
+    
+    possible_paths = [
+        st.secrets["snowflake"].get("private_key_path", ""),
+        "/etc/secrets/rsa_key.p8",  # Render Secret Files
+        "/app/rsa_key.p8",           # Si copié dans l'app
+        "rsa_key.p8"                 # Local
+    ]
+    
+    private_key_pem = None
+    
+    for path in possible_paths:
+        if path and os.path.exists(path):
+            try:
+                with open(path, "rb") as key_file:
+                    private_key_pem = key_file.read()
+                st.info(f"✅ Clé privée trouvée : {path}")
+                break
+            except Exception as e:
+                st.warning(f"⚠️ Impossible de lire {path}: {e}")
+                continue
+    
+    if private_key_pem is None:
+        st.error("❌ Aucune clé privée trouvée dans les chemins suivants:")
+        for path in possible_paths:
+            st.error(f"  - {path} (existe: {os.path.exists(path) if path else 'N/A'})")
+        raise FileNotFoundError("Private key not found")
+    
     # Charger et convertir la clé privée en DER
-    with open(st.secrets["snowflake"]["private_key_path"], "rb") as key_file:
-        private_key_obj = serialization.load_pem_private_key(
-            key_file.read(),
-            password=None,
-            backend=default_backend()
-        )
-        private_key_der = private_key_obj.private_bytes(
-            encoding=serialization.Encoding.DER,
-            format=serialization.PrivateFormat.PKCS8,
-            encryption_algorithm=serialization.NoEncryption()
-        )
+    private_key_obj = serialization.load_pem_private_key(
+        private_key_pem,
+        password=None,
+        backend=default_backend()
+    )
+    private_key_der = private_key_obj.private_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption()
+    )
     
     conn = snowflake.connector.connect(
         user=st.secrets["snowflake"]["user"],
